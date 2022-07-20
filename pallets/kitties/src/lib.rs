@@ -9,12 +9,17 @@ pub use frame_support::inherent::Vec;
 pub use frame_system::Error;
 
 use frame_support::pallet_prelude::*;
+use frame_support::sp_runtime::SaturatedConversion;
+use frame_support::storage::bounded_vec::BoundedVec;
+use frame_support::traits::Randomness;
+use frame_support::traits::Time;
 use frame_system::pallet_prelude::*;
-use frame_support::debug;
-use scale_info::prelude::string::String;
+pub use sp_core::H256;
+use frame_support::traits::Get;
 
 #[frame_support::pallet]
 pub mod pallet {
+
 	pub use super::*;
 
 	/// Configure the pallet by specifying the parameters and types on which it depends.
@@ -22,18 +27,29 @@ pub mod pallet {
 	pub trait Config: frame_system::Config {
 		/// Because this pallet emits events, it depends on the runtime's definition of an event.
 		type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
+
+		type Timestamp: Time;
+
+		type RandomnessHash: Randomness<H256, u32>;
+
+		// #[pallet::constant]
+		type KittyLimit: Get<u32>;
 	}
 
 	#[derive(TypeInfo, Default, Encode, Decode, Clone)]
 	#[scale_info(skip_type_params(T))]
 	pub struct Kitty<T: Config> {
-		dna: Vec<u8>,
+		dna: Dna,
 		owner: T::AccountId,
 		price: u32,
 		gender: Gender,
+		created_date: u64,
 	}
 
 	pub type Id = u32;
+
+	//pub type Dna = Vec<u32>;
+	pub type Dna = H256;
 
 	#[derive(TypeInfo, Encode, Decode, Clone)]
 	pub enum Gender {
@@ -68,7 +84,12 @@ pub mod pallet {
 	#[pallet::storage]
 	#[pallet::getter(fn kitties_owner)]
 	pub(super) type KittiesOwner<T: Config> =
-		StorageMap<_, Blake2_128Concat, T::AccountId, Vec<Vec<u8>>, OptionQuery>;
+		StorageMap<_, Blake2_128Concat, T::AccountId, Vec<Dna>, OptionQuery>;
+
+	// #[pallet::storage]
+	// #[pallet::getter(fn kitties_owner_with_limit)]
+	// pub(super) type KittiesOwnerWithLimit<T: Config> =
+	// 	StorageMap<_, Blake2_128Concat, T::AccountId, BoundedVec<Dna, u32>, OptionQuery>;
 
 	// Pallets use events to inform users when important changes are made.
 	// https://docs.substrate.io/v3/runtime/events-and-errors
@@ -81,9 +102,9 @@ pub mod pallet {
 
 		RemoveNumber(T::AccountId),
 
-		CreateKitty(Vec<u8>, T::AccountId, u32, u32),
+		CreateKitty(T::AccountId, u32, u32),
 
-		TransferKitty(T::AccountId, u32),
+		TransferKitty(Dna, T::AccountId, u32),
 	}
 
 	// Errors inform users that something went wrong.
@@ -96,6 +117,14 @@ pub mod pallet {
 
 		//KeyExist
 		NotOwner,
+
+		//Create kitty error
+		CreateFailed,
+
+		//Limit created kitty, exceed limit error
+		TooMuchKitties,
+
+		ExceedKittyLimit,
 	}
 
 	// Dispatchable functions allows users to interact with the pallet and invoke state changes.
@@ -139,25 +168,40 @@ pub mod pallet {
 
 		//function create kitty
 		#[pallet::weight(10_000 + T::DbWeight::get().writes(1))]
-		pub fn create_kitty(origin: OriginFor<T>, dna: Vec<u8>) -> DispatchResult {
+		//pub fn create_kitty(origin: OriginFor<T>, dna: Vec<u8>) -> DispatchResult {
+		pub fn create_kitty(origin: OriginFor<T>) -> DispatchResult {
 			let who = ensure_signed(origin)?;
 
 			//ensure!(age > 20, Error::<T>::TooYoung);
-
-			//Random gender by length of dna
-			//let dna = Self::generate_dna()?;
-			let gender = Self::generate_gender(dna.clone())?;
-
-			//Declare kitty object
-			let kitty =
-				Kitty { dna: dna.clone(), owner: who.clone(), price: 0, gender: gender.clone() };
+			let mut kitties_of_owner = <KittiesOwner<T>>::get(who.clone());
+			// ensure!(
+			// 	kitties_of_owner.len() <= T::KittyLimit::get() as usize,
+			// 	Error::<T>::TooMuchKitties
+			// );
 
 			//Get the currentId
 			//let current_id = Self::KittyId();
 			//let current_id = KittyId::<T>::get();
 			let mut current_id = <KittyId<T>>::get();
+			ensure!(current_id <= T::KittyLimit::get(), Error::<T>::ExceedKittyLimit);
+			//Random dna
+			let (mut dna, blockNumber) = Self::generate_dna(&current_id).unwrap();
 
-			//Insert kitty to storage as key is id - value is kitty 
+			//Random gender by length of dna
+			let gender = Self::generate_gender(dna.clone())?;
+
+			//Get current time
+			let current_time = T::Timestamp::now().saturated_into::<u64>();
+			//Declare kitty object
+			let kitty = Kitty {
+				dna: dna.clone(),
+				owner: who.clone(),
+				price: 0,
+				gender: gender.clone(),
+				created_date: current_time,
+			};
+
+			//Insert kitty to storage as key is id - value is kitty
 			//Kitties::<T>::insert(current_id, kitty);
 			<Kitties<T>>::insert(current_id, kitty);
 
@@ -166,106 +210,101 @@ pub mod pallet {
 			KittyId::<T>::put(current_id);
 
 			//Add kitty's dna to owner map as key: AccountId - value: dna
-			let kitties_of_owner = <KittiesOwner<T>>::get(who.clone());
+
 			// let mut kitties_of_owner = match kitties_of_owner[..] {
 			// 	[..] => Vec::<Vec<u8>>::new(),
 			// 	_ => <KittiesOwner<T>>::get(who.clone()).unwrap(),
 			// };
 
 			let mut kitties_of_owner = match kitties_of_owner {
-				None => Vec::<Vec<u8>>::new(),
+				None => Vec::<Dna>::new(),
 				Some(_) => <KittiesOwner<T>>::get(who.clone()).unwrap(),
 			};
 			kitties_of_owner.push(dna.clone());
 			<KittiesOwner<T>>::insert(who.clone(), kitties_of_owner);
 
 			// Emit an event.
-			Self::deposit_event(Event::CreateKitty(dna, who, 0, current_id));
+			Self::deposit_event(Event::CreateKitty(who, 0, current_id));
 			Ok(())
 		}
 		//transfer kitty
-		
-		#[pallet::weight(10_000 + T::DbWeight::get().writes(1))]
-		pub fn transfer_kitty(
-			origin: OriginFor<T>,
-			kitty_id: u32,
-			to: T::AccountId,
-		) -> DispatchResult {
-			let who = ensure_signed(origin)?;
 
-			//ensure!(!<Kitties<T>>::contains_key(kitty_id), Error::<T>::NoneValue);
-			//debug::RuntimeLogger::init();
-			//Get kitty info as Key: From 
-			let mut kitty_info: Kitty<T> = <Kitties<T>>::get(&kitty_id).ok_or(Error::<T>::NoneValue)?;
-			//debug::info!("kitty info by: {:?}", kitty_info);
-			ensure!(kitty_info.owner == who, Error::<T>::NotOwner);
+		// #[pallet::weight(10_000 + T::DbWeight::get().writes(1))]
+		// pub fn transfer_kitty(
+		// 	origin: OriginFor<T>,
+		// 	kitty_id: u32,
+		// 	to: T::AccountId,
+		// ) -> DispatchResult {
+		// 	let who = ensure_signed(origin)?;
 
-			//Change owner to TO
-			kitty_info.owner = to.clone();
-			let kitty_dna = kitty_info.clone().dna;
-			// match kitty_info {
-			// 	Some(x) => kitty_info.owner = to,
-			// 	None => panic!(),
-			// }
-			//<Kitties<T>>::mutate(&kitty_id, &mut kitty_info);
-			<Kitties<T>>::insert(&kitty_id, &mut kitty_info);
+		// 	//ensure!(!<Kitties<T>>::contains_key(kitty_id), Error::<T>::NoneValue);
+		// 	//debug::RuntimeLogger::init();
+		// 	//Get kitty info as Key: From
+		// 	let mut kitty_info: Kitty<T> = <Kitties<T>>::get(&kitty_id).ok_or(Error::<T>::NoneValue)?;
+		// 	//debug::info!("kitty info by: {:?}", kitty_info);
+		// 	ensure!(kitty_info.owner == who, Error::<T>::NotOwner);
 
-			//Remove dna from FROM
-			let kitties_of_owner = <KittiesOwner<T>>::get(who.clone());
-			let mut kitties_of_owner = match kitties_of_owner {
-				None => Vec::<Vec<u8>>::new(),
-				Some(_) => <KittiesOwner<T>>::get(who.clone()).unwrap(),
-			};
-			//debug::info!("kitty dna index: {:?}", kitty_dna);
-			//let index = kitties_of_owner.iter().position(|x| String::from_utf8((**x).to_vec()).expect("Found invalid UTF-8") == String::from_utf8(kitty_dna.clone()).expect("Found invalid UTF-8"));
-			//debug::info!("remove index: {:?}", index);
-			//Self::deposit_event(Event::TransferKitty(to, index.unwrap()));
-			let index = kitties_of_owner.iter().position(|x| *x == kitty_dna);
-			//let index = kitties_of_owner.iter().position(| &x| *x.to_string() == kitty_dna.to_string());
-			kitties_of_owner.remove(index.unwrap());
-			// kitties_of_owner.retain(| &x| x != "abc1");
-			// <KittiesOwner<T>>::mutate(who.clone(), &mut kitties_of_owner);
+		// 	//Change owner to TO
+		// 	kitty_info.owner = to.clone();
+		// 	let kitty_dna = kitty_info.clone().dna;
+		// 	// match kitty_info {
+		// 	// 	Some(x) => kitty_info.owner = to,
+		// 	// 	None => panic!(),
+		// 	// }
+		// 	//<Kitties<T>>::mutate(&kitty_id, &mut kitty_info);
+		// 	<Kitties<T>>::insert(&kitty_id, &mut kitty_info);
 
-			//Add kitty's dna to owner map as key: AccountId - value: dna
-			let kitties_of_owner = <KittiesOwner<T>>::get(to.clone());
-			let mut kitties_of_owner = match kitties_of_owner {
-				None => Vec::<Vec<u8>>::new(),
-				Some(_) => <KittiesOwner<T>>::get(who.clone()).unwrap(),
-			};
+		// 	//Remove dna from FROM
+		// 	let kitties_of_owner = <KittiesOwner<T>>::get(who.clone());
+		// 	let mut kitties_of_owner = match kitties_of_owner {
+		// 		None => Vec::<Dna>::new(),
+		// 		Some(_) => <KittiesOwner<T>>::get(who.clone()).unwrap(),
+		// 	};
+		// 	//debug::info!("kitty dna index: {:?}", kitty_dna);
+		// 	//let index = kitties_of_owner.iter().position(|x| String::from_utf8((**x).to_vec()).expect("Found invalid UTF-8") == String::from_utf8(kitty_dna.clone()).expect("Found invalid UTF-8"));
+		// 	//debug::info!("remove index: {:?}", index);
+		// 	//Self::deposit_event(Event::TransferKitty(to, index.unwrap()));
+		// 	let index = kitties_of_owner.iter().position(|x| *x == kitty_dna);
+		// 	//let index = kitties_of_owner.iter().position(| &x| *x.to_string() == kitty_dna.to_string());
+		// 	kitties_of_owner.remove(index.unwrap());
+		// 	// kitties_of_owner.retain(| &x| x != "abc1");
+		// 	// <KittiesOwner<T>>::mutate(who.clone(), &mut kitties_of_owner);
 
-			kitties_of_owner.push(kitty_dna.clone());
-			//<KittiesOwner<T>>::append(to.clone(), kitty_dna.clone());
-			<KittiesOwner<T>>::insert(to.clone(), kitties_of_owner);
+		// 	//Add kitty's dna to owner map as key: AccountId - value: dna
+		// 	let kitties_of_owner = <KittiesOwner<T>>::get(to.clone());
+		// 	let mut kitties_of_owner = match kitties_of_owner {
+		// 		None => Vec::<Dna>::new(),
+		// 		Some(_) => <KittiesOwner<T>>::get(who.clone()).unwrap(),
+		// 	};
 
-			// Emit an event.
-			Self::deposit_event(Event::TransferKitty(to, kitty_id));
-			Ok(())
-		}
+		// 	kitties_of_owner.push(kitty_dna.clone());
+		// 	//<KittiesOwner<T>>::append(to.clone(), kitty_dna.clone());
+		// 	<KittiesOwner<T>>::insert(to.clone(), kitties_of_owner);
+
+		// 	// Emit an event.
+		// 	Self::deposit_event(Event::TransferKitty(to, kitty_id));
+		// 	Ok(())
+		// }
 	}
 
 	//Helper
-	impl<T> Pallet<T> {
-		fn generate_gender(dna: Vec<u8>) -> Result<Gender, Error<T>> {
+	impl<T: Config> Pallet<T> {
+		fn generate_gender(dna: H256) -> Result<Gender, Error<T>> {
 			let mut res = Gender::Male;
 
-			if dna.len() % 2 == 0 {
-				res = Gender::Female;
-			}
+			// if dna.len() % 2 == 0 {
+			// 	res = Gender::Female;
+			// }
+			res = Gender::Female;
 
 			Ok(res)
 		}
 
 		//
-		// fn generate_dna() -> Result<Vec<u8>, Error<T>> {
-		// 	let mut randLength = rand::thread_rng();
+		fn generate_dna(nonce: &u32) -> Result<(H256, u32), Error<T>> {
+			let random_string = T::RandomnessHash::random(&nonce.clone().encode());
 
-		// 	let rand_string: String = thread_rng()
-		//     .sample_iter(&Alphanumeric)
-		//     .take(randLength.gen_range(0..20))
-		//     .map(char::from)
-		//     .collect();
-
-		// 	Ok(rand_string)
-		// }
+			Ok(random_string)
+		}
 	}
 }

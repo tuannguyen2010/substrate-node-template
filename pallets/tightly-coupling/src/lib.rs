@@ -5,11 +5,6 @@
 /// <https://docs.substrate.io/v3/runtime/frame>
 pub use pallet::*;
 
-//use sp_runtime::traits::{ BlakeTwo256, Hash, SaturatedConversion};
-
-// use sp_core::H256;
-// use sp_core::H512;
-
 #[cfg(test)]
 mod mock;
 
@@ -19,17 +14,14 @@ mod tests;
 #[cfg(feature = "runtime-benchmarks")]
 mod benchmarking;
 
-
-use frame_support::pallet_prelude::*;
-use frame_system::pallet_prelude::*;
-
 #[frame_support::pallet]
 pub mod pallet {
+	use frame_support::pallet_prelude::*;
+	use frame_system::pallet_prelude::*;
 
-	pub use super::*;
 	/// Configure the pallet by specifying the parameters and types on which it depends.
 	#[pallet::config]
-	pub trait Config: frame_system::Config {
+	pub trait Config: frame_system::Config + pallet_template::Config {
 		/// Because this pallet emits events, it depends on the runtime's definition of an event.
 		type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
 	}
@@ -46,14 +38,6 @@ pub mod pallet {
 	// https://docs.substrate.io/v3/runtime/storage#declaring-storage-items
 	pub type Something<T> = StorageValue<_, u32>;
 
-	#[pallet::storage]
-	#[pallet::getter(fn number)]
-	pub type Number<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, u32, ValueQuery>;
-
-	// #[pallet::storage]
-	// #[pallet::getter(fn utxo)]
-	// pub type Utxo<T:Config> = StorageMap<_, Blake2_128Concat, TransactionOutput, TransactionOutput, ValueQuery>;
-
 	// Pallets use events to inform users when important changes are made.
 	// https://docs.substrate.io/v3/runtime/events-and-errors
 	#[pallet::event]
@@ -63,10 +47,9 @@ pub mod pallet {
 		/// parameters. [something, who]
 		SomethingStored(u32, T::AccountId),
 
-		PutNumber(u32, T::AccountId),
+		AccessStorage(u32),
 
-		RemoveNumber(T::AccountId),
-		// AddTransactionSuccess(Transaction)
+		UpdateStorage,
 	}
 
 	// Errors inform users that something went wrong.
@@ -102,73 +85,33 @@ pub mod pallet {
 		}
 
 		#[pallet::weight(10_000 + T::DbWeight::get().writes(1))]
-		pub fn put_number(origin: OriginFor<T>, number: u32) -> DispatchResult {
+		pub fn access_storage_from_template(origin: OriginFor<T>) -> DispatchResult {
 			// Check that the extrinsic was signed and get the signer.
 			// This function will return an error if the extrinsic is not signed.
 			// https://docs.substrate.io/v3/runtime/origins
-			let who = ensure_signed(origin)?;
+			let _ = ensure_signed(origin)?;
 
-			// Update storage.
-			<Number<T>>::insert(who.clone(), number);
+			let data = pallet_template::Pallet::<T>::something().unwrap();
 
 			// Emit an event.
-			Self::deposit_event(Event::PutNumber(number, who));
+			Self::deposit_event(Event::AccessStorage(data));
 			// Return a successful DispatchResultWithPostInfo
 			Ok(())
 		}
 
 		#[pallet::weight(10_000 + T::DbWeight::get().writes(1))]
-		pub fn remove_number(origin: OriginFor<T>) -> DispatchResult {
+		pub fn modify_storage_from_template(origin: OriginFor<T>, new_value:u32) -> DispatchResult {
 			// Check that the extrinsic was signed and get the signer.
 			// This function will return an error if the extrinsic is not signed.
 			// https://docs.substrate.io/v3/runtime/origins
-			let who = ensure_signed(origin)?;
+			let _ = ensure_signed(origin)?;
 
-			// Update storage.
-			<Number<T>>::remove(who.clone());
+			pallet_template::Pallet::<T>::update_storage(new_value)?;
 
 			// Emit an event.
-			Self::deposit_event(Event::RemoveNumber(who));
+			Self::deposit_event(Event::UpdateStorage);
 			// Return a successful DispatchResultWithPostInfo
 			Ok(())
 		}
-
-		/// An example dispatchable that may throw a custom error.
-		#[pallet::weight(10_000 + T::DbWeight::get().reads_writes(1,1))]
-		pub fn cause_error(origin: OriginFor<T>) -> DispatchResult {
-			let _who = ensure_signed(origin)?;
-
-			// Read a value from storage.
-			match <Something<T>>::get() {
-				// Return an error if the value has not been set.
-				None => return Err(Error::<T>::NoneValue.into()),
-				Some(old) => {
-					// Increment the value read from storage; will error in the event of overflow.
-					let new = old.checked_add(1).ok_or(Error::<T>::StorageOverflow)?;
-					// Update the value in storage with the incremented result.
-					<Something<T>>::put(new);
-					Ok(())
-				},
-			}
-		}
-	}
-}
-
-impl<T: Config> Pallet<T> {
-	pub fn update_storage(value: u32) -> DispatchResult {
-		Something::<T>::put(value);
-		Ok(())
-	}
-}
-
-pub trait DoSome{
-	fn increase_value(value:u32) -> u32;
-
-}
-
-
-impl<T:Config> DoSome for Pallet<T>{
-	fn increase_value(value:u32) -> u32{
-		value +5
 	}
 }

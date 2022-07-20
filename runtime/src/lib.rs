@@ -6,6 +6,7 @@
 #[cfg(feature = "std")]
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
+use frame_support::traits::Time;
 use pallet_grandpa::{
 	fg_primitives, AuthorityId as GrandpaId, AuthorityList as GrandpaAuthorityList,
 };
@@ -47,6 +48,10 @@ pub use sp_runtime::{Perbill, Permill};
 pub use pallet_template;
 
 pub use pallet_kitties;
+
+pub use pallet_tightly_coupling;
+
+pub use pallet_loosely_coupling;
 
 /// An index to a block.
 pub type BlockNumber = u32;
@@ -144,6 +149,8 @@ parameter_types! {
 	pub BlockLength: frame_system::limits::BlockLength = frame_system::limits::BlockLength
 		::max_with_normal_ratio(5 * 1024 * 1024, NORMAL_DISPATCH_RATIO);
 	pub const SS58Prefix: u8 = 42;
+
+	pub const KittyLimit: u32 = 2;
 }
 
 // Configure FRAME pallets to include in runtime.
@@ -270,6 +277,18 @@ impl pallet_template::Config for Runtime {
 
 impl pallet_kitties::Config for Runtime {
 	type Event = Event;
+	type Timestamp  = pallet_timestamp::Pallet<Runtime>;
+	type RandomnessHash = pallet_randomness_collective_flip::Pallet<Runtime>;
+	type KittyLimit = KittyLimit;
+}
+
+impl pallet_tightly_coupling::Config for Runtime {
+	type Event = Event;
+}
+
+impl pallet_loosely_coupling::Config for Runtime {
+	type Event = Event;
+	type Increase = TemplateModule ;
 }
 
 // Create the runtime by composing the FRAME pallets that were previously configured.
@@ -289,7 +308,9 @@ construct_runtime!(
 		Sudo: pallet_sudo,
 		// Include the custom logic from the pallet-template in the runtime.
 		TemplateModule: pallet_template,
-		KittiesModule: pallet_kitties
+		KittiesModule: pallet_kitties,
+		Tightly: pallet_tightly_coupling,
+		Loosely: pallet_loosely_coupling,
 	}
 );
 
