@@ -3,18 +3,25 @@
 use super::*;
 
 #[allow(unused)]
-use crate::Pallet as Template;
+use crate::Pallet as Kitties;
 use frame_benchmarking::{benchmarks, whitelisted_caller};
 use frame_system::RawOrigin;
+use frame_benchmarking::vec;
 
-benchmarks! {
-	do_something {
-		let s in 0 .. 100;
+benchmarks! { 
+	// tên của benchmark
+	create_kitty {
+		// khởi tạo các tham số cho extrinsic benchmark
+		let dnas : Vec<u8> = b"lienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlqlienlq".to_vec();
+
 		let caller: T::AccountId = whitelisted_caller();
-	}: _(RawOrigin::Signed(caller), s)
-	verify {
-		assert_eq!(Something::<T>::get(), Some(s));
-	}
+	}: create_kitty (RawOrigin::Signed(caller), dnas)
 
-	impl_benchmark_test_suite!(Template, crate::mock::new_test_ext(), crate::mock::Test);
+	// kiểm tra lại trạng thái storage khi thực hiện extrinsic xem đúng chưa 
+	verify {
+		assert_eq!(KittyId::<T>::get(), 1);
+	}
+ 
+	// thực hiện benchmark với mock runtime, storage ban đầu.
+	impl_benchmark_test_suite!(Kitties, crate::mock::new_test_ext(), crate::mock::Test);
 }
